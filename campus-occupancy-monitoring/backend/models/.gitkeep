@@ -1,0 +1,3 @@
+# Esta carpeta almacena los modelos de YOLOv8 (.pt)
+# Los archivos de modelo son pesados y no deben subirse a Git
+# Descargar el modelo desde: https://github.com/ultralytics/ultralytics
