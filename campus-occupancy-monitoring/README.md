@@ -112,7 +112,48 @@ python app.py
 
 ```
 
-## Despliegue en Render
+## Despliegue recomendado: Hugging Face Spaces con Docker
+
+Hugging Face Spaces es una mejor opcion para una demostracion con YOLOv8 porque
+su entorno gratuito de CPU ofrece mas memoria que Render Free. El proyecto ya
+incluye un `Dockerfile` para ejecutar Flask, servir el frontend y procesar con
+YOLO desde el mismo contenedor.
+
+### Configuracion del Space
+
+Crear un Space nuevo en Hugging Face con:
+
+```bash
+Space SDK:
+Docker
+
+Visibility:
+Public
+```
+
+El contenedor expone el puerto `7860`, que es el puerto esperado por Hugging
+Face Spaces. El comando de arranque usa un solo worker de Gunicorn para evitar
+duplicar el modelo YOLO en memoria:
+
+```bash
+gunicorn --chdir backend "app:create_app()" --bind 0.0.0.0:7860 --workers 1 --threads 1 --timeout 180
+```
+
+Variables opcionales recomendadas en Settings > Variables:
+
+```bash
+REPORT_EXPIRATION_HOURS=168
+PROCESSED_IMAGE_EXPIRATION_MINUTES=5
+MAX_STORED_REPORTS=100
+PROCESSED_IMAGE_JPEG_QUALITY=70
+PROCESSED_IMAGE_MAX_DIMENSION=1280
+YOLO_IMAGE_SIZE=640
+```
+
+Con estos valores el sistema conserva los datos historicos, borra rapido las
+imagenes temporales y reduce el peso de las imagenes procesadas.
+
+## Despliegue alternativo en Render
 
 ### Backend Flask
 
@@ -150,9 +191,10 @@ https://TU-BACKEND-EN-RENDER.onrender.com/api
 
 por la URL real del Web Service, manteniendo el sufijo `/api`.
 
-Nota: el almacenamiento de Render en Web Services puede ser temporal. El sistema
-conserva la informacion del historial, pero elimina las imagenes procesadas
-despues de 5 minutos y tambien antes de generar una nueva tanda de analisis.
+Nota: Render Free tiene 512 MB de memoria y puede no ser suficiente para YOLOv8,
+porque Ultralytics carga PyTorch. Para una demo con YOLO, se recomienda Hugging
+Face Spaces con Docker. El almacenamiento de Render en Web Services tambien
+puede ser temporal.
 
 Variables opcionales para controlar almacenamiento en Render:
 
@@ -162,6 +204,7 @@ PROCESSED_IMAGE_EXPIRATION_MINUTES=5
 MAX_STORED_REPORTS=100
 PROCESSED_IMAGE_JPEG_QUALITY=70
 PROCESSED_IMAGE_MAX_DIMENSION=1280
+YOLO_IMAGE_SIZE=640
 ```
 
 Con estos valores el sistema mantiene los datos historicos, borra rapido las
