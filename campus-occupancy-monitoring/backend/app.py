@@ -4,9 +4,12 @@ Aplicación principal Flask
 """
 
 import os
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from routes.occupancy_routes import occupancy_bp
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_FOLDER = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend"))
 
 
 def create_app():
@@ -25,6 +28,9 @@ def create_app():
 
     @app.route("/")
     def index():
+        if os.path.exists(os.path.join(FRONTEND_FOLDER, "index.html")):
+            return send_from_directory(FRONTEND_FOLDER, "index.html")
+
         return jsonify({
             "status": "success",
             "message": "Backend del Sistema de Monitoreo de Ocupación funcionando correctamente",
@@ -36,6 +42,13 @@ def create_app():
                 "imagen_procesada": "GET  /api/imagen/procesada/<filename>",
             },
         })
+
+    @app.route("/<path:filename>")
+    def frontend_files(filename):
+        file_path = os.path.join(FRONTEND_FOLDER, filename)
+        if os.path.isfile(file_path):
+            return send_from_directory(FRONTEND_FOLDER, filename)
+        return send_from_directory(FRONTEND_FOLDER, "index.html")
 
     return app
 
