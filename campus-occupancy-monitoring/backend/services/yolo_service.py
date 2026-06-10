@@ -1,161 +1,197 @@
 """
 Servicio de Detección con YOLOv8
-Gestiona la detección de personas usando el modelo YOLOv8
+Detecta personas en imágenes usando YOLOv8 preentrenado (COCO clase 0).
+Si ultralytics no está instalado, cae en modo simulación para pruebas.
+
+Pre-procesamiento aplicado antes de inferencia (basado en técnicas PDI):
+  1. CLAHE sobre canal L del espacio LAB - mejora contraste adaptativo
+  2. Filtro bilateral - reduce ruido conservando bordes
+Esto mejora la detección de personas sentadas, de espaldas o en condiciones
+de iluminación irregular.
 """
 
-# ============================================================
-# IMPORTACIONES PARA YOLOv8
-# Descomentar cuando se integre el modelo real
-# ============================================================
-# from ultralytics import YOLO
-# import cv2
-# import numpy as np
+import os
+import tempfile
+from datetime import datetime
 
-from config import CONFIDENCE_THRESHOLD, MODELS_FOLDER
+try:
+    from ultralytics import YOLO
+    import cv2
+    import numpy as np
+    YOLO_AVAILABLE = True
+except ImportError:
+    YOLO_AVAILABLE = False
 
-# Variable global para el modelo (se cargará una sola vez)
+from config import CONFIDENCE_THRESHOLD, MODELS_FOLDER, PROCESSED_FOLDER
+
 _model = None
 
 
+def preprocess_for_detection(image_path: str) -> str | None:
+    """
+    Pipeline híbrido de pre-procesamiento para mejorar detección de personas
+    sentadas, de espaldas o en escenas con iluminación irregular:
+
+      1. CLAHE en canal L (LAB) - contraste adaptativo por zonas
+      2. Filtro bilateral - reduce ruido preservando siluetas
+      3. Unsharp mask (enfoque) - resalta contornos corporales
+      4. Corrección gamma - aclara zonas oscuras (bajo mesas, esquinas)
+
+    Retorna la ruta de un archivo temporal o None si falla
+    (en ese caso YOLO usa la imagen original como fallback).
+    """
+    try:
+        img = cv2.imread(str(image_path))
+        if img is None:
+            return None
+
+        # 1. CLAHE sobre canal L (espacio LAB)
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        l_eq = clahe.apply(l_channel)
+        lab_eq = cv2.merge([l_eq, a_channel, b_channel])
+        img_clahe = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+
+        # 2. Filtro bilateral (preserva bordes, reduce ruido)
+        img_bilateral = cv2.bilateralFilter(img_clahe, d=9, sigmaColor=75, sigmaSpace=75)
+
+        # 3. Unsharp mask – enfoca siluetas sin saturar
+        #   Fórmula: sharpened = original * 1.5 – gaussian_blur * 0.5
+        blur = cv2.GaussianBlur(img_bilateral, (0, 0), sigmaX=3)
+        img_sharp = cv2.addWeighted(img_bilateral, 1.5, blur, -0.5, 0)
+
+        # 4. Corrección gamma (γ = 0.85) – levanta sombras sin saturar luces 
+        inv_gamma = 1.0 / 0.85
+        lut = np.array([
+            min(255, int((i / 255.0) ** inv_gamma * 255))
+            for i in range(256)
+        ], dtype=np.uint8)
+        img_processed = cv2.LUT(img_sharp, lut)
+
+        # 5. Guardar en archivo temporal para inferencia (YOLO requiere ruta de archivo)
+        ext = os.path.splitext(image_path)[-1] or ".jpg"
+        tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+        tmp.close()
+        cv2.imwrite(tmp.name, img_processed)
+        return tmp.name
+
+    except Exception:
+        return None
+
+
 def load_model(model_path=None):
-    """
-    Carga el modelo YOLOv8 preentrenado.
-    
-    Args:
-        model_path (str, optional): Ruta al modelo .pt
-                                    Si no se proporciona, usa yolov8n.pt (nano)
-    
-    Returns:
-        YOLO: Instancia del modelo cargado
-    
-    TODO: Implementar carga real del modelo
-    """
+    """Carga el modelo YOLOv8 una sola vez (singleton)."""
     global _model
-    
-    # ============================================================
-    # IMPLEMENTACIÓN FUTURA DE CARGA DE MODELO
-    # ============================================================
-    # if _model is None:
-    #     if model_path is None:
-    #         # Usar modelo preentrenado por defecto (nano - más rápido)
-    #         model_path = "yolov8n.pt"
-    #     _model = YOLO(model_path)
-    # return _model
-    
-    # Por ahora, retornamos None (modelo no cargado)
-    return None
+    if not YOLO_AVAILABLE:
+        return None
+    if _model is None:
+        if model_path is None:
+            candidate = os.path.join(MODELS_FOLDER, "yolov8n.pt")
+            model_path = candidate if os.path.exists(candidate) else "yolov8n.pt"
+        _model = YOLO(model_path)
+    return _model
 
 
 def detect_people(image_path):
     """
-    Detecta personas en una imagen usando YOLOv8.
-    
-    Esta función está preparada para integrar YOLOv8. Por ahora retorna
-    un conteo simulado para pruebas del sistema.
-    
-    Args:
-        image_path (str): Ruta a la imagen a procesar
-    
-    Returns:
-        dict: Diccionario con:
-            - count (int): Número de personas detectadas
-            - detections (list): Lista de detecciones con coordenadas
-            - processed_image_path (str): Ruta de la imagen con anotaciones
-    
-    Ejemplo de uso futuro:
-        result = detect_people("captures/camera_001.jpg")
-        print(f"Personas detectadas: {result['count']}")
+    Detecta personas en una imagen con YOLOv8.
+
+    Returns dict:
+        count                    – número de personas detectadas
+        detections               – lista de {bbox, confidence}
+        processed_image_filename – nombre del archivo anotado en PROCESSED_FOLDER
+        simulated                – True si se usaron datos simulados
+        source_image             – nombre del archivo fuente
     """
-    
-    # ============================================================
-    # IMPLEMENTACIÓN FUTURA CON YOLOv8
-    # ============================================================
-    # 
-    # Pasos para integrar YOLOv8:
-    # 
-    # 1. Cargar el modelo:
-    #    model = load_model()
-    # 
-    # 2. Ejecutar inferencia:
-    #    results = model(image_path, conf=CONFIDENCE_THRESHOLD)
-    # 
-    # 3. Filtrar solo detecciones de personas (clase 0 en COCO):
-    #    person_detections = []
-    #    for result in results:
-    #        boxes = result.boxes
-    #        for box in boxes:
-    #            if int(box.cls) == 0:  # 0 = persona en COCO
-    #                person_detections.append({
-    #                    "bbox": box.xyxy.tolist()[0],  # [x1, y1, x2, y2]
-    #                    "confidence": float(box.conf)
-    #                })
-    # 
-    # 4. Guardar imagen con anotaciones:
-    #    annotated_frame = results[0].plot()
-    #    output_path = f"processed/result_{timestamp}.jpg"
-    #    cv2.imwrite(output_path, annotated_frame)
-    # 
-    # 5. Retornar resultados:
-    #    return {
-    #        "count": len(person_detections),
-    #        "detections": person_detections,
-    #        "processed_image_path": output_path
-    #    }
-    # ============================================================
-    
-    # DATOS SIMULADOS PARA PRUEBAS
-    # Reemplazar con la implementación real cuando se integre YOLOv8
-    simulated_count = 45
-    
+    source_name = os.path.basename(str(image_path))
+
+    if not os.path.exists(str(image_path)):
+        return {
+            "count": 0,
+            "detections": [],
+            "processed_image_filename": None,
+            "simulated": False,
+            "source_image": source_name,
+            "error": "Imagen no encontrada",
+        }
+
+    if not YOLO_AVAILABLE:
+        return _simulated_result(source_name)
+
+    model = load_model()
+    if model is None:
+        return _simulated_result(source_name)
+
+    # Pre-procesamiento PDI antes de inferencia 
+    temp_path = preprocess_for_detection(str(image_path))
+    inference_path = temp_path if temp_path else str(image_path)
+
+    try:
+        results = model(
+            inference_path,
+            conf=CONFIDENCE_THRESHOLD, # 0.25 – captura personas parcialmente visibles
+            classes=[0], # solo clase "person"
+            imgsz=1280, # resolución alta → detecta personas pequeñas/lejanas
+            iou=0.4, # NMS más estricto → no fusiona personas adyacentes
+            augment=True, # TTA: inferencia multi-escala + flip → mejor recall
+            verbose=False,
+        )
+    finally:
+        # Limpiar archivo temporal independientemente del resultado
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+    person_detections = []
+    for result in results:
+        if result.boxes is not None:
+            for box in result.boxes:
+                person_detections.append({
+                    "bbox": [round(x, 1) for x in box.xyxy[0].tolist()],
+                    "confidence": round(float(box.conf[0]), 3),
+                })
+
+    os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = os.path.splitext(source_name)[0]
+    output_filename = f"{base}_result_{ts}.jpg"
+    output_path = os.path.join(PROCESSED_FOLDER, output_filename)
+    cv2.imwrite(output_path, results[0].plot())
+
     return {
-        "count": simulated_count,
-        "detections": [
-            # Ejemplo de formato de detección
-            {"bbox": [100, 200, 150, 400], "confidence": 0.92},
-            {"bbox": [300, 180, 350, 380], "confidence": 0.88},
-            # ... más detecciones simuladas
-        ],
-        "processed_image_path": "processed/result.jpg"
+        "count": len(person_detections),
+        "detections": person_detections,
+        "processed_image_filename": output_filename,
+        "simulated": False,
+        "source_image": source_name,
     }
 
 
-def detect_people_from_frame(frame):
-    """
-    Detecta personas directamente desde un frame de OpenCV.
-    
-    Args:
-        frame (numpy.ndarray): Frame de imagen en formato BGR (OpenCV)
-    
-    Returns:
-        dict: Mismo formato que detect_people()
-    
-    TODO: Implementar cuando se integre YOLOv8
-    """
-    # ============================================================
-    # IMPLEMENTACIÓN FUTURA
-    # ============================================================
-    # model = load_model()
-    # results = model(frame, conf=CONFIDENCE_THRESHOLD)
-    # ... procesar resultados similar a detect_people()
-    
-    # Por ahora, retornar datos simulados
+def analyze_multiple_images(image_paths):
+    """Procesa una lista de rutas de imagen y retorna resultados individuales."""
+    return [detect_people(path) for path in image_paths]
+
+
+def _simulated_result(source_name="unknown"):
+    import random
+    count = random.randint(0, 25)
     return {
-        "count": 45,
+        "count": count,
         "detections": [],
-        "processed_image_path": None
+        "processed_image_filename": None,
+        "simulated": True,
+        "source_image": source_name,
     }
 
 
 def get_model_info():
-    """
-    Obtiene información sobre el modelo cargado.
-    
-    Returns:
-        dict: Información del modelo (nombre, versión, clases, etc.)
-    """
     return {
         "model_name": "YOLOv8n (Nano)",
+        "yolo_available": YOLO_AVAILABLE,
         "model_loaded": _model is not None,
         "confidence_threshold": CONFIDENCE_THRESHOLD,
-        "target_class": "person (COCO class 0)"
+        "target_class": "person (COCO class 0)",
     }

@@ -1,118 +1,100 @@
 """
 Servicio de Ocupación
-Gestiona la lógica de negocio para el monitoreo de ocupación
+Clasifica el estado del laboratorio usando conteo absoluto de personas.
 """
 
+import os
 from datetime import datetime
+
 from config import (
     DEFAULT_SITE_NAME,
     DEFAULT_MAX_CAPACITY,
     UPDATE_INTERVAL_MINUTES,
-    OCCUPANCY_THRESHOLDS,
-    STATUS_LABELS
+    PEOPLE_THRESHOLDS,
+    STATUS_LABELS,
+    CAPTURES_FOLDER,
+    ALLOWED_EXTENSIONS,
 )
+from services.yolo_service import analyze_multiple_images
 
 
-def classify_occupancy_status(occupancy_percentage):
+def classify_occupancy_by_count(people_count):
     """
-    Clasifica el estado de ocupación basado en el porcentaje.
-    
-    Args:
-        occupancy_percentage (float): Porcentaje de ocupación (0-100)
-    
-    Returns:
-        str: Estado de ocupación (Vacío, Parcialmente ocupado, Ocupado)
+    Clasifica el estado según el conteo absoluto de personas.
+      0–4   → Vacío
+      5–15  → Parcialmente lleno
+      16+   → Lleno
     """
-    if occupancy_percentage <= OCCUPANCY_THRESHOLDS["empty"]:
+    if people_count <= PEOPLE_THRESHOLDS["empty_max"]:
         return STATUS_LABELS["empty"]
-    elif occupancy_percentage <= OCCUPANCY_THRESHOLDS["partial"]:
+    elif people_count <= PEOPLE_THRESHOLDS["partial_max"]:
         return STATUS_LABELS["partial"]
     else:
         return STATUS_LABELS["full"]
 
 
-def get_current_occupancy_status(site_name=None, max_capacity=None):
+def _list_images_in_folder(folder):
+    if not os.path.exists(folder):
+        os.makedirs(folder, exist_ok=True)
+        return []
+    return [
+        os.path.join(folder, f)
+        for f in os.listdir(folder)
+        if "." in f and f.rsplit(".", 1)[-1].lower() in ALLOWED_EXTENSIONS
+    ]
+
+
+def _build_response(site, capacity, image_results):
+    total_people = sum(r["count"] for r in image_results)
+    return {
+        "site": site,
+        "people_count": total_people,
+        "max_capacity": capacity,
+        "status": classify_occupancy_by_count(total_people),
+        "image_results": image_results,
+        "images_analyzed": len(image_results),
+        "next_update": f"{UPDATE_INTERVAL_MINUTES} minutos",
+        "last_update": datetime.now().strftime("%I:%M %p"),
+    }
+
+
+def analyze_captures(site_name=None, max_capacity=None):
     """
-    Obtiene el estado actual de ocupación.
-    
-    En la versión actual, retorna datos simulados estructurados
-    como si vinieran de la detección con YOLOv8.
-    
-    Args:
-        site_name (str, optional): Nombre del sitio. Por defecto usa DEFAULT_SITE_NAME
-        max_capacity (int, optional): Capacidad máxima. Por defecto usa DEFAULT_MAX_CAPACITY
-    
-    Returns:
-        dict: Diccionario con los datos de ocupación
+    Escanea la carpeta 'captures', procesa cada imagen con YOLO
+    y retorna el estado agregado del laboratorio.
     """
-    # Usar valores por defecto si no se proporcionan
     site = site_name or DEFAULT_SITE_NAME
     capacity = max_capacity or DEFAULT_MAX_CAPACITY
-    
-    # ============================================================
-    # DATOS SIMULADOS
-    # En el futuro, aquí se integrará la detección real con YOLOv8
-    # Por ahora, usamos datos de prueba para verificar el sistema
-    # ============================================================
-    
-    # Simulación del conteo de personas (reemplazar con yolo_service.detect_people())
-    people_count = 45  # Dato simulado
-    
-    # Calcular porcentaje de ocupación
-    occupancy_percentage = round((people_count / capacity) * 100, 1)
-    
-    # Clasificar estado de ocupación
-    status = classify_occupancy_status(occupancy_percentage)
-    
-    # Obtener hora actual para last_update
-    current_time = datetime.now().strftime("%I:%M %p")
-    
-    # Construir respuesta
-    occupancy_data = {
-        "site": site,
-        "people_count": people_count,
-        "max_capacity": capacity,
-        "occupancy_percentage": occupancy_percentage,
-        "status": status,
-        "next_update": f"{UPDATE_INTERVAL_MINUTES} minutos",
-        "last_update": current_time,
-        "processed_image": "processed/result.jpg"
-    }
-    
-    return occupancy_data
+    image_paths = _list_images_in_folder(CAPTURES_FOLDER)
+
+    if not image_paths:
+        return {
+            "site": site,
+            "people_count": 0,
+            "max_capacity": capacity,
+            "status": STATUS_LABELS["empty"],
+            "image_results": [],
+            "images_analyzed": 0,
+            "next_update": f"{UPDATE_INTERVAL_MINUTES} minutos",
+            "last_update": datetime.now().strftime("%I:%M %p"),
+            "message": "No hay imágenes en la carpeta de capturas. Sube imágenes para analizar.",
+        }
+
+    image_results = analyze_multiple_images(image_paths)
+    return _build_response(site, capacity, image_results)
+
+
+def analyze_uploaded_images(image_paths, site_name=None, max_capacity=None):
+    """Procesa una lista de rutas (imágenes recién subidas) y retorna el estado agregado."""
+    site = site_name or DEFAULT_SITE_NAME
+    capacity = max_capacity or DEFAULT_MAX_CAPACITY
+    image_results = analyze_multiple_images(image_paths)
+    return _build_response(site, capacity, image_results)
 
 
 def get_occupancy_history(site_name=None, limit=10):
-    """
-    Obtiene el historial de ocupación de un sitio.
-    
-    Args:
-        site_name (str, optional): Nombre del sitio
-        limit (int): Número máximo de registros a retornar
-    
-    Returns:
-        list: Lista de registros históricos de ocupación
-    
-    TODO: Implementar cuando se integre la base de datos
-    """
-    # Placeholder para historial
-    # En el futuro, esto consultará la base de datos
     return []
 
 
 def export_occupancy_to_csv(site_name=None, start_date=None, end_date=None):
-    """
-    Exporta los datos de ocupación a formato CSV.
-    
-    Args:
-        site_name (str, optional): Nombre del sitio a exportar
-        start_date (datetime, optional): Fecha de inicio del rango
-        end_date (datetime, optional): Fecha de fin del rango
-    
-    Returns:
-        str: Contenido CSV o ruta al archivo generado
-    
-    TODO: Implementar cuando se integre la base de datos y pandas
-    """
-    # Placeholder para exportación CSV
     pass
