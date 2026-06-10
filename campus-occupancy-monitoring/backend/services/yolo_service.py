@@ -18,14 +18,18 @@ try:
     import cv2
     import numpy as np
     CV2_AVAILABLE = True
-except ImportError:
+    CV2_IMPORT_ERROR = None
+except ImportError as exc:
     CV2_AVAILABLE = False
+    CV2_IMPORT_ERROR = str(exc)
 
 try:
     from ultralytics import YOLO
     ULTRALYTICS_AVAILABLE = True
-except ImportError:
+    ULTRALYTICS_IMPORT_ERROR = None
+except ImportError as exc:
     ULTRALYTICS_AVAILABLE = False
+    ULTRALYTICS_IMPORT_ERROR = str(exc)
 
 YOLO_AVAILABLE = CV2_AVAILABLE and ULTRALYTICS_AVAILABLE
 
@@ -35,6 +39,7 @@ from config import (
     PROCESSED_FOLDER,
     PROCESSED_IMAGE_JPEG_QUALITY,
     PROCESSED_IMAGE_MAX_DIMENSION,
+    YOLO_IMAGE_SIZE,
 )
 
 _model = None
@@ -224,11 +229,11 @@ def detect_people(image_path):
         }
 
     if not YOLO_AVAILABLE:
-        return _simulated_result(source_name)
+        return _simulated_result(source_name, image_path, "YOLO no disponible")
 
     model = load_model()
     if model is None:
-        return _simulated_result(source_name)
+        return _simulated_result(source_name, image_path, "Modelo YOLO no cargado")
 
     # Pre-procesamiento PDI antes de inferencia 
     temp_path = preprocess_for_detection(str(image_path))
@@ -239,9 +244,9 @@ def detect_people(image_path):
             inference_path,
             conf=CONFIDENCE_THRESHOLD, # 0.25 – captura personas parcialmente visibles
             classes=[0], # solo clase "person"
-            imgsz=1280, # resolución alta → detecta personas pequeñas/lejanas
+            imgsz=YOLO_IMAGE_SIZE,
             iou=0.4, # NMS más estricto → no fusiona personas adyacentes
-            augment=True, # TTA: inferencia multi-escala + flip → mejor recall
+            augment=False,
             verbose=False,
         )
     finally:
@@ -283,15 +288,38 @@ def analyze_multiple_images(image_paths):
     return [detect_people(path) for path in image_paths]
 
 
-def _simulated_result(source_name="unknown"):
+def _simulated_result(source_name="unknown", image_path=None, reason="Simulado"):
     import random
     count = random.randint(0, 25)
+    processed_image_filename = None
+
+    if CV2_AVAILABLE and image_path and os.path.exists(str(image_path)):
+        image = cv2.imread(str(image_path))
+        if image is not None:
+            os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            base = os.path.splitext(source_name)[0]
+            processed_image_filename = f"{base}_result_{ts}.jpg"
+            output_path = os.path.join(PROCESSED_FOLDER, processed_image_filename)
+            image = resize_for_storage(image)
+            cv2.putText(
+                image,
+                reason,
+                (20, 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.9,
+                (0, 0, 255),
+                2,
+            )
+            write_jpeg_image(output_path, blur_detected_faces(image))
+
     return {
         "count": count,
         "detections": [],
-        "processed_image_filename": None,
+        "processed_image_filename": processed_image_filename,
         "simulated": True,
         "source_image": source_name,
+        "error": reason,
     }
 
 
@@ -299,7 +327,12 @@ def get_model_info():
     return {
         "model_name": "YOLOv8n (Nano)",
         "yolo_available": YOLO_AVAILABLE,
+        "cv2_available": CV2_AVAILABLE,
+        "ultralytics_available": ULTRALYTICS_AVAILABLE,
+        "cv2_import_error": CV2_IMPORT_ERROR,
+        "ultralytics_import_error": ULTRALYTICS_IMPORT_ERROR,
         "model_loaded": _model is not None,
         "confidence_threshold": CONFIDENCE_THRESHOLD,
         "target_class": "person (COCO class 0)",
+        "image_size": YOLO_IMAGE_SIZE,
     }
