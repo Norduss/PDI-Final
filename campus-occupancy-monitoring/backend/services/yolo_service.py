@@ -1,8 +1,13 @@
 """
-Servicio de deteccion de personas e imagenes procesadas.
+Servicio de Detección con YOLOv8
+Detecta personas en imágenes usando YOLOv8 preentrenado (COCO clase 0).
+Si ultralytics no está instalado, cae en modo simulación para pruebas.
 
-Por defecto usa OpenCV HOG para funcionar en Render Free (<512 MB).
-Si se configura DETECTION_BACKEND=yolo e instalas ultralytics, intenta usar YOLOv8.
+Pre-procesamiento aplicado antes de inferencia (basado en técnicas PDI):
+  1. CLAHE sobre canal L del espacio LAB - mejora contraste adaptativo
+  2. Filtro bilateral - reduce ruido conservando bordes
+Esto mejora la detección de personas sentadas, de espaldas o en condiciones
+de iluminación irregular.
 """
 
 import os
@@ -16,22 +21,28 @@ try:
 except ImportError:
     CV2_AVAILABLE = False
 
+try:
+    from ultralytics import YOLO
+    ULTRALYTICS_AVAILABLE = True
+except ImportError:
+    ULTRALYTICS_AVAILABLE = False
+
+YOLO_AVAILABLE = CV2_AVAILABLE and ULTRALYTICS_AVAILABLE
+
 from config import (
     CONFIDENCE_THRESHOLD,
-    DETECTION_BACKEND,
     MODELS_FOLDER,
     PROCESSED_FOLDER,
     PROCESSED_IMAGE_JPEG_QUALITY,
     PROCESSED_IMAGE_MAX_DIMENSION,
-    YOLO_IMAGE_SIZE,
 )
 
 _model = None
 _face_cascade = None
-_hog_detector = None
 
 
 def load_face_cascade():
+    """Carga el clasificador Haar cascade de rostros una sola vez."""
     global _face_cascade
     if not CV2_AVAILABLE:
         return None
@@ -43,27 +54,8 @@ def load_face_cascade():
     return _face_cascade
 
 
-def load_hog_detector():
-    global _hog_detector
-    if not CV2_AVAILABLE:
-        return None
-    if _hog_detector is None:
-        _hog_detector = cv2.HOGDescriptor()
-        _hog_detector.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-    return _hog_detector
-
-
-def yolo_is_available():
-    if not CV2_AVAILABLE or DETECTION_BACKEND != "yolo":
-        return False
-    try:
-        import ultralytics  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
 def blur_detected_faces(image):
+    """Detecta rostros con Haar cascade y desenfoca cada region encontrada."""
     cascade = load_face_cascade()
     if cascade is None or image is None:
         return image
@@ -96,13 +88,11 @@ def resize_for_storage(image):
         return image
 
     scale = PROCESSED_IMAGE_MAX_DIMENSION / longest_side
-    new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+    new_size = (int(width * scale), int(height * scale))
     return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
 
 
 def write_jpeg_image(path: str, image) -> bool:
-    if image is None:
-        return False
     image = resize_for_storage(image)
     return cv2.imwrite(
         str(path),
@@ -112,6 +102,7 @@ def write_jpeg_image(path: str, image) -> bool:
 
 
 def blur_faces_in_file(image_path: str) -> bool:
+    """Anonimiza rostros en un archivo de imagen y sobrescribe el mismo archivo."""
     if not CV2_AVAILABLE:
         return False
 
@@ -124,6 +115,7 @@ def blur_faces_in_file(image_path: str) -> bool:
 
 
 def save_uploaded_image_with_blurred_faces(uploaded_file, destination: str) -> bool:
+    """Guarda una imagen subida despues de anonimizar rostros en memoria."""
     if not CV2_AVAILABLE:
         uploaded_file.save(destination)
         return False
@@ -142,42 +134,65 @@ def save_uploaded_image_with_blurred_faces(uploaded_file, destination: str) -> b
 
 
 def preprocess_for_detection(image_path: str) -> str | None:
-    if not CV2_AVAILABLE:
-        return None
+    """
+    Pipeline híbrido de pre-procesamiento para mejorar detección de personas
+    sentadas, de espaldas o en escenas con iluminación irregular:
 
+      1. CLAHE en canal L (LAB) - contraste adaptativo por zonas
+      2. Filtro bilateral - reduce ruido preservando siluetas
+      3. Unsharp mask (enfoque) - resalta contornos corporales
+      4. Corrección gamma - aclara zonas oscuras (bajo mesas, esquinas)
+
+    Retorna la ruta de un archivo temporal o None si falla
+    (en ese caso YOLO usa la imagen original como fallback).
+    """
     try:
         img = cv2.imread(str(image_path))
         if img is None:
             return None
 
-        img = resize_for_storage(img)
+        # 1. CLAHE sobre canal L (espacio LAB)
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         l_channel, a_channel, b_channel = cv2.split(lab)
         clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
         l_eq = clahe.apply(l_channel)
         lab_eq = cv2.merge([l_eq, a_channel, b_channel])
         img_clahe = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
-        img_bilateral = cv2.bilateralFilter(img_clahe, d=7, sigmaColor=50, sigmaSpace=50)
-        blur = cv2.GaussianBlur(img_bilateral, (0, 0), sigmaX=2)
-        img_processed = cv2.addWeighted(img_bilateral, 1.35, blur, -0.35, 0)
+
+        # 2. Filtro bilateral (preserva bordes, reduce ruido)
+        img_bilateral = cv2.bilateralFilter(img_clahe, d=9, sigmaColor=75, sigmaSpace=75)
+
+        # 3. Unsharp mask – enfoca siluetas sin saturar
+        #   Fórmula: sharpened = original * 1.5 – gaussian_blur * 0.5
+        blur = cv2.GaussianBlur(img_bilateral, (0, 0), sigmaX=3)
+        img_sharp = cv2.addWeighted(img_bilateral, 1.5, blur, -0.5, 0)
+
+        # 4. Corrección gamma (γ = 0.85) – levanta sombras sin saturar luces 
+        inv_gamma = 1.0 / 0.85
+        lut = np.array([
+            min(255, int((i / 255.0) ** inv_gamma * 255))
+            for i in range(256)
+        ], dtype=np.uint8)
+        img_processed = cv2.LUT(img_sharp, lut)
         img_processed = blur_detected_faces(img_processed)
 
+        # 5. Guardar en archivo temporal para inferencia (YOLO requiere ruta de archivo)
         ext = os.path.splitext(image_path)[-1] or ".jpg"
         tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
         tmp.close()
         write_jpeg_image(tmp.name, img_processed)
         return tmp.name
+
     except Exception:
         return None
 
 
 def load_model(model_path=None):
+    """Carga el modelo YOLOv8 una sola vez (singleton)."""
     global _model
-    if not yolo_is_available():
+    if not YOLO_AVAILABLE:
         return None
     if _model is None:
-        from ultralytics import YOLO
-
         if model_path is None:
             candidate = os.path.join(MODELS_FOLDER, "yolov8n.pt")
             model_path = candidate if os.path.exists(candidate) else "yolov8n.pt"
@@ -185,104 +200,52 @@ def load_model(model_path=None):
     return _model
 
 
-def _missing_image_result(source_name):
-    return {
-        "count": 0,
-        "detections": [],
-        "processed_image_filename": None,
-        "simulated": False,
-        "source_image": source_name,
-        "error": "Imagen no encontrada",
-    }
+def detect_people(image_path):
+    """
+    Detecta personas en una imagen con YOLOv8.
 
-
-def _build_output_path(source_name):
-    os.makedirs(PROCESSED_FOLDER, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = os.path.splitext(source_name)[0]
-    output_filename = f"{base}_result_{ts}.jpg"
-    return output_filename, os.path.join(PROCESSED_FOLDER, output_filename)
-
-
-def detect_people_with_opencv(image_path):
+    Returns dict:
+        count                    – número de personas detectadas
+        detections               – lista de {bbox, confidence}
+        processed_image_filename – nombre del archivo anotado en PROCESSED_FOLDER
+        simulated                – True si se usaron datos simulados
+        source_image             – nombre del archivo fuente
+    """
     source_name = os.path.basename(str(image_path))
 
     if not os.path.exists(str(image_path)):
-        return _missing_image_result(source_name)
-    if not CV2_AVAILABLE:
+        return {
+            "count": 0,
+            "detections": [],
+            "processed_image_filename": None,
+            "simulated": False,
+            "source_image": source_name,
+            "error": "Imagen no encontrada",
+        }
+
+    if not YOLO_AVAILABLE:
         return _simulated_result(source_name)
-
-    image = cv2.imread(str(image_path))
-    detector = load_hog_detector()
-    if image is None or detector is None:
-        return _simulated_result(source_name)
-
-    image = resize_for_storage(image)
-    boxes, weights = detector.detectMultiScale(
-        image,
-        winStride=(8, 8),
-        padding=(8, 8),
-        scale=1.05,
-    )
-
-    detections = []
-    annotated_image = image.copy()
-    for (x, y, w, h), weight in zip(boxes, weights):
-        confidence = round(float(weight), 3)
-        detections.append({
-            "bbox": [int(x), int(y), int(x + w), int(y + h)],
-            "confidence": confidence,
-        })
-        cv2.rectangle(annotated_image, (x, y), (x + w, y + h), (46, 204, 113), 2)
-        cv2.putText(
-            annotated_image,
-            f"persona {confidence:.2f}",
-            (x, max(20, y - 8)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (46, 204, 113),
-            2,
-        )
-
-    output_filename, output_path = _build_output_path(source_name)
-    write_jpeg_image(output_path, blur_detected_faces(annotated_image))
-
-    return {
-        "count": len(detections),
-        "detections": detections,
-        "processed_image_filename": output_filename,
-        "simulated": False,
-        "source_image": source_name,
-        "detector": "opencv-hog",
-    }
-
-
-def detect_people_with_yolo(image_path):
-    source_name = os.path.basename(str(image_path))
-
-    if not os.path.exists(str(image_path)):
-        return _missing_image_result(source_name)
-    if not yolo_is_available():
-        return detect_people_with_opencv(image_path)
 
     model = load_model()
     if model is None:
-        return detect_people_with_opencv(image_path)
+        return _simulated_result(source_name)
 
+    # Pre-procesamiento PDI antes de inferencia 
     temp_path = preprocess_for_detection(str(image_path))
     inference_path = temp_path if temp_path else str(image_path)
 
     try:
         results = model(
             inference_path,
-            conf=CONFIDENCE_THRESHOLD,
-            classes=[0],
-            imgsz=YOLO_IMAGE_SIZE,
-            iou=0.4,
-            augment=False,
+            conf=CONFIDENCE_THRESHOLD, # 0.25 – captura personas parcialmente visibles
+            classes=[0], # solo clase "person"
+            imgsz=1280, # resolución alta → detecta personas pequeñas/lejanas
+            iou=0.4, # NMS más estricto → no fusiona personas adyacentes
+            augment=True, # TTA: inferencia multi-escala + flip → mejor recall
             verbose=False,
         )
     finally:
+        # Limpiar archivo temporal independientemente del resultado
         if temp_path and os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
@@ -298,7 +261,11 @@ def detect_people_with_yolo(image_path):
                     "confidence": round(float(box.conf[0]), 3),
                 })
 
-    output_filename, output_path = _build_output_path(source_name)
+    os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = os.path.splitext(source_name)[0]
+    output_filename = f"{base}_result_{ts}.jpg"
+    output_path = os.path.join(PROCESSED_FOLDER, output_filename)
     annotated_image = blur_detected_faces(results[0].plot())
     write_jpeg_image(output_path, annotated_image)
 
@@ -308,17 +275,11 @@ def detect_people_with_yolo(image_path):
         "processed_image_filename": output_filename,
         "simulated": False,
         "source_image": source_name,
-        "detector": "yolo",
     }
 
 
-def detect_people(image_path):
-    if DETECTION_BACKEND == "yolo":
-        return detect_people_with_yolo(image_path)
-    return detect_people_with_opencv(image_path)
-
-
 def analyze_multiple_images(image_paths):
+    """Procesa una lista de rutas de imagen y retorna resultados individuales."""
     return [detect_people(path) for path in image_paths]
 
 
@@ -331,17 +292,14 @@ def _simulated_result(source_name="unknown"):
         "processed_image_filename": None,
         "simulated": True,
         "source_image": source_name,
-        "detector": "simulated",
     }
 
 
 def get_model_info():
     return {
-        "detector_backend": DETECTION_BACKEND,
-        "model_name": "OpenCV HOG" if DETECTION_BACKEND != "yolo" else "YOLOv8n",
-        "opencv_available": CV2_AVAILABLE,
-        "yolo_available": yolo_is_available(),
+        "model_name": "YOLOv8n (Nano)",
+        "yolo_available": YOLO_AVAILABLE,
         "model_loaded": _model is not None,
         "confidence_threshold": CONFIDENCE_THRESHOLD,
-        "target_class": "person",
+        "target_class": "person (COCO class 0)",
     }

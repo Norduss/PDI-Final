@@ -34,8 +34,7 @@ Crear un sistema que permita:
 - **Flask** - Framework web
 - **Flask-CORS** - Manejo de CORS
 - **OpenCV** - Procesamiento de imágenes
-- **OpenCV HOG** - Detección liviana de personas para Render Free
-- **Ultralytics YOLOv8** - Detección opcional si se usa un plan con más memoria
+- **Ultralytics YOLOv8** - Detección de objetos
 - **NumPy** - Operaciones numéricas
 - **Pandas** - Exportación de datos (opcional)
 
@@ -158,22 +157,15 @@ despues de 5 minutos y tambien antes de generar una nueva tanda de analisis.
 Variables opcionales para controlar almacenamiento en Render:
 
 ```bash
-DETECTION_BACKEND=opencv
 REPORT_EXPIRATION_HOURS=168
 PROCESSED_IMAGE_EXPIRATION_MINUTES=5
 MAX_STORED_REPORTS=100
 PROCESSED_IMAGE_JPEG_QUALITY=70
 PROCESSED_IMAGE_MAX_DIMENSION=1280
-YOLO_IMAGE_SIZE=640
 ```
 
 Con estos valores el sistema mantiene los datos historicos, borra rapido las
 imagenes temporales y guarda las imagenes nuevas con menor peso.
-
-En Render Free se recomienda dejar `DETECTION_BACKEND=opencv`, porque YOLOv8
-carga PyTorch y puede superar los 512 MB de memoria. Para volver a YOLO en un
-plan con mas memoria, agrega `ultralytics` a `backend/requirements.txt` y usa
-`DETECTION_BACKEND=yolo`.
 
 
 ## Autores

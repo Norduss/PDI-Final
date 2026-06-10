@@ -2,4 +2,6 @@ flask
 flask-cors
 gunicorn
 opencv-python-headless
+ultralytics
 numpy
+pandas
