@@ -246,7 +246,7 @@ def detect_people(image_path):
             classes=[0], # solo clase "person"
             imgsz=YOLO_IMAGE_SIZE,
             iou=0.4, # NMS más estricto → no fusiona personas adyacentes
-            augment=False,
+            augment=True, # TTA: inferencia multi-escala + flip para mejorar recall
             verbose=False,
         )
     finally:
