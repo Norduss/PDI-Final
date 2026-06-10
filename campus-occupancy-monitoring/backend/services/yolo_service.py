@@ -15,16 +15,93 @@ import tempfile
 from datetime import datetime
 
 try:
-    from ultralytics import YOLO
     import cv2
     import numpy as np
-    YOLO_AVAILABLE = True
+    CV2_AVAILABLE = True
 except ImportError:
-    YOLO_AVAILABLE = False
+    CV2_AVAILABLE = False
+
+try:
+    from ultralytics import YOLO
+    ULTRALYTICS_AVAILABLE = True
+except ImportError:
+    ULTRALYTICS_AVAILABLE = False
+
+YOLO_AVAILABLE = CV2_AVAILABLE and ULTRALYTICS_AVAILABLE
 
 from config import CONFIDENCE_THRESHOLD, MODELS_FOLDER, PROCESSED_FOLDER
 
 _model = None
+_face_cascade = None
+
+
+def load_face_cascade():
+    """Carga el clasificador Haar cascade de rostros una sola vez."""
+    global _face_cascade
+    if not CV2_AVAILABLE:
+        return None
+    if _face_cascade is None:
+        cascade_path = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+        _face_cascade = cv2.CascadeClassifier(cascade_path)
+        if _face_cascade.empty():
+            _face_cascade = None
+    return _face_cascade
+
+
+def blur_detected_faces(image):
+    """Detecta rostros con Haar cascade y desenfoca cada region encontrada."""
+    cascade = load_face_cascade()
+    if cascade is None or image is None:
+        return image
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    faces = cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(24, 24),
+    )
+
+    for x, y, w, h in faces:
+        face_roi = image[y:y + h, x:x + w]
+        if face_roi.size == 0:
+            continue
+        kernel_size = max(31, ((min(w, h) // 2) * 2) + 1)
+        image[y:y + h, x:x + w] = cv2.GaussianBlur(face_roi, (kernel_size, kernel_size), 0)
+
+    return image
+
+
+def blur_faces_in_file(image_path: str) -> bool:
+    """Anonimiza rostros en un archivo de imagen y sobrescribe el mismo archivo."""
+    if not CV2_AVAILABLE:
+        return False
+
+    image = cv2.imread(str(image_path))
+    if image is None:
+        return False
+
+    cv2.imwrite(str(image_path), blur_detected_faces(image))
+    return True
+
+
+def save_uploaded_image_with_blurred_faces(uploaded_file, destination: str) -> bool:
+    """Guarda una imagen subida despues de anonimizar rostros en memoria."""
+    if not CV2_AVAILABLE:
+        uploaded_file.save(destination)
+        return False
+
+    file_bytes = uploaded_file.read()
+    image_array = np.frombuffer(file_bytes, np.uint8)
+    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
+    if image is None:
+        uploaded_file.seek(0)
+        uploaded_file.save(destination)
+        return False
+
+    cv2.imwrite(destination, blur_detected_faces(image))
+    return True
 
 
 def preprocess_for_detection(image_path: str) -> str | None:
@@ -68,6 +145,7 @@ def preprocess_for_detection(image_path: str) -> str | None:
             for i in range(256)
         ], dtype=np.uint8)
         img_processed = cv2.LUT(img_sharp, lut)
+        img_processed = blur_detected_faces(img_processed)
 
         # 5. Guardar en archivo temporal para inferencia (YOLO requiere ruta de archivo)
         ext = os.path.splitext(image_path)[-1] or ".jpg"
@@ -159,7 +237,8 @@ def detect_people(image_path):
     base = os.path.splitext(source_name)[0]
     output_filename = f"{base}_result_{ts}.jpg"
     output_path = os.path.join(PROCESSED_FOLDER, output_filename)
-    cv2.imwrite(output_path, results[0].plot())
+    annotated_image = blur_detected_faces(results[0].plot())
+    cv2.imwrite(output_path, annotated_image)
 
     return {
         "count": len(person_detections),

@@ -5,10 +5,11 @@ Rutas de la API para el monitoreo de ocupación
 import os
 import random
 from flask import Blueprint, jsonify, request, send_from_directory
+from werkzeug.security import safe_join
 from werkzeug.utils import secure_filename
 
 from services.occupancy_service import analyze_captures, analyze_uploaded_images
-from services.yolo_service import get_model_info
+from services.yolo_service import blur_faces_in_file, get_model_info, save_uploaded_image_with_blurred_faces
 from services.reports_service import save_report, get_all_reports, clear_reports
 from config import CAPTURES_FOLDER, PROCESSED_FOLDER, ALLOWED_EXTENSIONS, MONITORED_SITES, DATASET_FOLDER
 
@@ -81,7 +82,7 @@ def analyze_images():
             if file and _allowed_file(file.filename):
                 filename = secure_filename(file.filename)
                 filepath = os.path.join(CAPTURES_FOLDER, filename)
-                file.save(filepath)
+                save_uploaded_image_with_blurred_faces(file, filepath)
                 saved_paths.append(filepath)
 
         if not saved_paths:
@@ -111,11 +112,17 @@ def analyze_images():
 
 @occupancy_bp.route("/imagen/procesada/<path:filename>", methods=["GET"])
 def serve_processed_image(filename):
+    image_path = safe_join(os.path.abspath(PROCESSED_FOLDER), filename)
+    if image_path:
+        blur_faces_in_file(image_path)
     return send_from_directory(os.path.abspath(PROCESSED_FOLDER), filename)
 
 
 @occupancy_bp.route("/imagen/captura/<path:filename>", methods=["GET"])
 def serve_capture_image(filename):
+    image_path = safe_join(os.path.abspath(CAPTURES_FOLDER), filename)
+    if image_path:
+        blur_faces_in_file(image_path)
     return send_from_directory(os.path.abspath(CAPTURES_FOLDER), filename)
 
 
