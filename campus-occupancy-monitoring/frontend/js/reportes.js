@@ -180,11 +180,11 @@ async function loadReports() {
 }
 
 async function clearReports() {
-    if (!confirm('¿Eliminar todo el historial de reportes? Esta acción no se puede deshacer.')) return;
+    if (!confirm('¿Eliminar todo el historial de reportes y sus imágenes procesadas? Esta acción no se puede deshacer.')) return;
     try {
         const response = await fetch(`${CONFIG.API_BASE_URL}/reportes`, { method: 'DELETE' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        showToast('Historial eliminado correctamente', 'success');
+        showToast('Historial e imágenes procesadas eliminados correctamente', 'success');
         loadReports();
     } catch (error) {
         showToast(`Error: ${error.message}`, 'error');

@@ -188,6 +188,6 @@ def get_reports():
 def delete_reports():
     try:
         clear_reports()
-        return jsonify({"status": "success", "message": "Historial eliminado"}), 200
+        return jsonify({"status": "success", "message": "Historial e imagenes procesadas eliminados"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

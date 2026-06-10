@@ -33,6 +33,7 @@ ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "bmp", "webp"}
 
 REPORTS_FOLDER = "reports"
 REPORTS_FILE = "reports/history.json"
+REPORT_EXPIRATION_HOURS = 2
 
 DATASET_FOLDER = "../dataset"
 
