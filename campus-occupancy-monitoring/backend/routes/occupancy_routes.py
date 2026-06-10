@@ -10,7 +10,7 @@ from werkzeug.utils import secure_filename
 
 from services.occupancy_service import analyze_captures, analyze_uploaded_images
 from services.yolo_service import blur_faces_in_file, get_model_info, save_uploaded_image_with_blurred_faces
-from services.reports_service import save_report, get_all_reports, clear_reports
+from services.reports_service import clear_processed_images, save_report, get_all_reports, clear_reports
 from config import CAPTURES_FOLDER, PROCESSED_FOLDER, ALLOWED_EXTENSIONS, MONITORED_SITES, DATASET_FOLDER
 
 occupancy_bp = Blueprint("occupancy", __name__)
@@ -75,6 +75,7 @@ def analyze_images():
         if not files or all(f.filename == "" for f in files):
             return jsonify({"status": "error", "message": "No se seleccionaron archivos"}), 400
 
+        clear_processed_images()
         os.makedirs(CAPTURES_FOLDER, exist_ok=True)
         saved_paths = []
 
@@ -112,9 +113,6 @@ def analyze_images():
 
 @occupancy_bp.route("/imagen/procesada/<path:filename>", methods=["GET"])
 def serve_processed_image(filename):
-    image_path = safe_join(os.path.abspath(PROCESSED_FOLDER), filename)
-    if image_path:
-        blur_faces_in_file(image_path)
     return send_from_directory(os.path.abspath(PROCESSED_FOLDER), filename)
 
 
@@ -171,6 +169,7 @@ def analyze_dataset():
         sample_size = min(5, len(all_images))
         selected = random.sample(all_images, sample_size)
 
+        clear_processed_images()
         result = analyze_uploaded_images(selected)
         save_report(result)
         return jsonify({"status": "success", "data": result}), 200

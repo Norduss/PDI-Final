@@ -29,7 +29,13 @@ except ImportError:
 
 YOLO_AVAILABLE = CV2_AVAILABLE and ULTRALYTICS_AVAILABLE
 
-from config import CONFIDENCE_THRESHOLD, MODELS_FOLDER, PROCESSED_FOLDER
+from config import (
+    CONFIDENCE_THRESHOLD,
+    MODELS_FOLDER,
+    PROCESSED_FOLDER,
+    PROCESSED_IMAGE_JPEG_QUALITY,
+    PROCESSED_IMAGE_MAX_DIMENSION,
+)
 
 _model = None
 _face_cascade = None
@@ -72,6 +78,29 @@ def blur_detected_faces(image):
     return image
 
 
+def resize_for_storage(image):
+    if image is None:
+        return image
+
+    height, width = image.shape[:2]
+    longest_side = max(width, height)
+    if longest_side <= PROCESSED_IMAGE_MAX_DIMENSION:
+        return image
+
+    scale = PROCESSED_IMAGE_MAX_DIMENSION / longest_side
+    new_size = (int(width * scale), int(height * scale))
+    return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+
+
+def write_jpeg_image(path: str, image) -> bool:
+    image = resize_for_storage(image)
+    return cv2.imwrite(
+        str(path),
+        image,
+        [int(cv2.IMWRITE_JPEG_QUALITY), PROCESSED_IMAGE_JPEG_QUALITY],
+    )
+
+
 def blur_faces_in_file(image_path: str) -> bool:
     """Anonimiza rostros en un archivo de imagen y sobrescribe el mismo archivo."""
     if not CV2_AVAILABLE:
@@ -81,7 +110,7 @@ def blur_faces_in_file(image_path: str) -> bool:
     if image is None:
         return False
 
-    cv2.imwrite(str(image_path), blur_detected_faces(image))
+    write_jpeg_image(str(image_path), blur_detected_faces(image))
     return True
 
 
@@ -100,7 +129,7 @@ def save_uploaded_image_with_blurred_faces(uploaded_file, destination: str) -> b
         uploaded_file.save(destination)
         return False
 
-    cv2.imwrite(destination, blur_detected_faces(image))
+    write_jpeg_image(destination, blur_detected_faces(image))
     return True
 
 
@@ -151,7 +180,7 @@ def preprocess_for_detection(image_path: str) -> str | None:
         ext = os.path.splitext(image_path)[-1] or ".jpg"
         tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
         tmp.close()
-        cv2.imwrite(tmp.name, img_processed)
+        write_jpeg_image(tmp.name, img_processed)
         return tmp.name
 
     except Exception:
@@ -238,7 +267,7 @@ def detect_people(image_path):
     output_filename = f"{base}_result_{ts}.jpg"
     output_path = os.path.join(PROCESSED_FOLDER, output_filename)
     annotated_image = blur_detected_faces(results[0].plot())
-    cv2.imwrite(output_path, annotated_image)
+    write_jpeg_image(output_path, annotated_image)
 
     return {
         "count": len(person_detections),

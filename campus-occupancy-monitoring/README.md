@@ -151,8 +151,21 @@ https://TU-BACKEND-EN-RENDER.onrender.com/api
 por la URL real del Web Service, manteniendo el sufijo `/api`.
 
 Nota: el almacenamiento de Render en Web Services puede ser temporal. El sistema
-ya elimina reportes e imagenes procesadas despues de 2 horas para reducir el uso
-de disco.
+conserva la informacion del historial, pero elimina las imagenes procesadas
+despues de 5 minutos y tambien antes de generar una nueva tanda de analisis.
+
+Variables opcionales para controlar almacenamiento en Render:
+
+```bash
+REPORT_EXPIRATION_HOURS=168
+PROCESSED_IMAGE_EXPIRATION_MINUTES=5
+MAX_STORED_REPORTS=100
+PROCESSED_IMAGE_JPEG_QUALITY=70
+PROCESSED_IMAGE_MAX_DIMENSION=1280
+```
+
+Con estos valores el sistema mantiene los datos historicos, borra rapido las
+imagenes temporales y guarda las imagenes nuevas con menor peso.
 
 
 ## Autores

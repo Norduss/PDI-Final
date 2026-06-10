@@ -7,6 +7,7 @@ import os
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from routes.occupancy_routes import occupancy_bp
+from services.reports_service import purge_expired_reports
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_FOLDER = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend"))
@@ -23,6 +24,8 @@ def create_app():
     # Crear carpetas necesarias si no existen
     for folder in ("captures", "processed", "models"):
         os.makedirs(folder, exist_ok=True)
+
+    purge_expired_reports()
 
     app.register_blueprint(occupancy_bp, url_prefix="/api")
 

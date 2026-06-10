@@ -6,7 +6,14 @@ import json
 import os
 from datetime import datetime, timedelta
 
-from config import ALLOWED_EXTENSIONS, PROCESSED_FOLDER, REPORTS_FILE, REPORT_EXPIRATION_HOURS
+from config import (
+    ALLOWED_EXTENSIONS,
+    MAX_STORED_REPORTS,
+    PROCESSED_FOLDER,
+    PROCESSED_IMAGE_EXPIRATION_MINUTES,
+    REPORTS_FILE,
+    REPORT_EXPIRATION_HOURS,
+)
 
 def _ensure_file():
     os.makedirs(os.path.dirname(REPORTS_FILE), exist_ok=True)
@@ -53,9 +60,52 @@ def _delete_report_images(report: dict) -> None:
         _delete_processed_image(filename)
 
 
-def _delete_expired_orphan_processed_images(cutoff: datetime) -> None:
+def _get_report_image_filenames(reports: list) -> set:
+    filenames = set()
+    for report in reports:
+        for image in report.get("processed_images", []):
+            filename = image.get("filename") if isinstance(image, dict) else image
+            if filename:
+                filenames.add(os.path.basename(str(filename)))
+    return filenames
+
+
+def _delete_unreferenced_processed_images(active_reports: list) -> None:
     if not os.path.isdir(PROCESSED_FOLDER):
         return
+
+    referenced_filenames = _get_report_image_filenames(active_reports)
+    for filename in os.listdir(PROCESSED_FOLDER):
+        if "." not in filename:
+            continue
+
+        extension = filename.rsplit(".", 1)[-1].lower()
+        if extension not in ALLOWED_EXTENSIONS:
+            continue
+
+        if filename not in referenced_filenames:
+            _delete_processed_image(filename)
+
+
+def clear_processed_images() -> None:
+    if not os.path.isdir(PROCESSED_FOLDER):
+        return
+
+    for filename in os.listdir(PROCESSED_FOLDER):
+        if "." not in filename:
+            continue
+
+        extension = filename.rsplit(".", 1)[-1].lower()
+        if extension in ALLOWED_EXTENSIONS:
+            _delete_processed_image(filename)
+
+
+def purge_expired_processed_images() -> int:
+    if not os.path.isdir(PROCESSED_FOLDER):
+        return 0
+
+    cutoff = datetime.now() - timedelta(minutes=PROCESSED_IMAGE_EXPIRATION_MINUTES)
+    deleted_count = 0
 
     for filename in os.listdir(PROCESSED_FOLDER):
         if "." not in filename:
@@ -65,17 +115,20 @@ def _delete_expired_orphan_processed_images(cutoff: datetime) -> None:
         if extension not in ALLOWED_EXTENSIONS:
             continue
 
-        path = os.path.join(PROCESSED_FOLDER, filename)
+        image_path = os.path.join(PROCESSED_FOLDER, filename)
         try:
-            modified_at = datetime.fromtimestamp(os.path.getmtime(path))
+            modified_at = datetime.fromtimestamp(os.path.getmtime(image_path))
             if modified_at < cutoff:
-                os.remove(path)
+                _delete_processed_image(filename)
+                deleted_count += 1
         except OSError:
             pass
 
+    return deleted_count
+
 
 def purge_expired_reports() -> int:
-    """Elimina reportes e imagenes procesadas vencidas."""
+    """Elimina reportes vencidos sin depender de sus imagenes temporales."""
     data = _load_data()
     reports = data.get("reports", [])
     cutoff = datetime.now() - timedelta(hours=REPORT_EXPIRATION_HOURS)
@@ -85,21 +138,23 @@ def purge_expired_reports() -> int:
     for report in reports:
         timestamp = _parse_timestamp(report.get("timestamp"))
         if timestamp and timestamp < cutoff:
-            _delete_report_images(report)
             deleted_count += 1
         else:
             active_reports.append(report)
 
-    if deleted_count:
+    if len(active_reports) > MAX_STORED_REPORTS:
+        deleted_count += len(active_reports[MAX_STORED_REPORTS:])
+        active_reports = active_reports[:MAX_STORED_REPORTS]
+
+    if deleted_count or len(active_reports) != len(reports):
         data["reports"] = active_reports
         _save_data(data)
 
-    _delete_expired_orphan_processed_images(cutoff)
+    purge_expired_processed_images()
     return deleted_count
 
 
 def save_report(analysis_result: dict) -> dict:
-    purge_expired_reports()
     data = _load_data()
 
     now = datetime.now()
@@ -126,6 +181,7 @@ def save_report(analysis_result: dict) -> dict:
     data["reports"].insert(0, report)
 
     _save_data(data)
+    purge_expired_reports()
 
     return report
 
