@@ -1,3 +1,12 @@
+---
+title: Campus Occupancy Monitoring
+emoji: 🏫
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
+
 # Sistema Inteligente de Monitoreo de Ocupación de Espacios en Campus Universitario mediante Visión Computacional
 
 Sistema web para monitorear la ocupación de espacios dentro de un campus universitario usando visión computacional con YOLOv8.
