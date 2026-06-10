@@ -2,7 +2,10 @@
  * Página de Reportes – Monitor de Ocupación UAO
  */
 
-const CONFIG = { API_BASE_URL: 'http://localhost:5000/api', TOAST_DURATION_MS: 3500 };
+const CONFIG = {
+    API_BASE_URL: window.APP_CONFIG?.API_BASE_URL || 'http://localhost:5000/api',
+    TOAST_DURATION_MS: 3500,
+};
 
 const AUTO_INTERVAL_SECONDS = 60; // debe coincidir con dashboard.js
 const LS_KEY = 'ocupacion_next_analysis';

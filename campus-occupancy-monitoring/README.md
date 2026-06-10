@@ -112,6 +112,48 @@ python app.py
 
 ```
 
+## Despliegue en Render
+
+### Backend Flask
+
+Crear un **Web Service** en Render conectado al repositorio y usar:
+
+```bash
+Build Command:
+pip install -r backend/requirements.txt
+
+Start Command:
+gunicorn --chdir backend "app:create_app()"
+```
+
+El backend usa `gunicorn` para ejecutarse en produccion y `opencv-python-headless`
+para evitar dependencias graficas innecesarias del servidor.
+
+### Frontend estatico
+
+Crear un **Static Site** en Render conectado al mismo repositorio y usar:
+
+```bash
+Publish Directory:
+frontend
+
+Build Command:
+# dejar vacio
+```
+
+Cuando Render genere la URL del backend, reemplazar este valor en
+`frontend/js/config.js`:
+
+```js
+https://TU-BACKEND-EN-RENDER.onrender.com/api
+```
+
+por la URL real del Web Service, manteniendo el sufijo `/api`.
+
+Nota: el almacenamiento de Render en Web Services puede ser temporal. El sistema
+ya elimina reportes e imagenes procesadas despues de 2 horas para reducir el uso
+de disco.
+
 
 ## Autores
 

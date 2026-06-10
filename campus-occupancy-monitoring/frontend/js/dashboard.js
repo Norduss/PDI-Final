@@ -3,7 +3,7 @@
  */
 
 const CONFIG = {
-    API_BASE_URL: 'http://localhost:5000/api',
+    API_BASE_URL: window.APP_CONFIG?.API_BASE_URL || 'http://localhost:5000/api',
     UPDATE_INTERVAL_MS: 15 * 60 * 1000,
     TOAST_DURATION_MS: 3500,
     PEOPLE_THRESHOLDS: { empty_max: 30, partial_max: 60 },
